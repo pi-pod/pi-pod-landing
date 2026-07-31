@@ -89,8 +89,10 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/pi-pod/pi-pod-landing
             org.opencontainers.image.revision=${{ needs.validate.outputs.source_sha }}
-          provenance: mode=max
-          sbom: true
+          # Keep a single-platform image digest identical to the runtime
+          # RepoDigest so cosign verify and LKG rollback authority agree.
+          provenance: false
+          sbom: false
 
       - name: Validate immutable digest
         shell: bash
