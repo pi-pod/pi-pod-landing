@@ -65,9 +65,6 @@ jobs:
           ref: ${{ needs.validate.outputs.source_sha }}
           persist-credentials: false
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -77,22 +74,26 @@ jobs:
 
       - name: Build and push immutable image
         id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64
-          pull: true
-          push: true
-          tags: ${{ env.IMAGE }}:${{ needs.validate.outputs.source_sha }}
-          build-args: SOURCE_DATE_EPOCH=${{ needs.validate.outputs.source_epoch }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/pi-pod/pi-pod-landing
-            org.opencontainers.image.revision=${{ needs.validate.outputs.source_sha }}
-          # Keep a single-platform image digest identical to the runtime
-          # RepoDigest so cosign verify and LKG rollback authority agree.
-          provenance: false
-          sbom: false
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          SOURCE_EPOCH: ${{ needs.validate.outputs.source_epoch }}
+        run: |
+          set -euo pipefail
+          # Classic docker build/push (not buildx) so the signed registry
+          # digest matches the runtime image Id / RepoDigest used for LKG.
+          docker pull --platform linux/amd64 node:22-alpine
+          docker build --platform linux/amd64 \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_EPOCH}" \
+            --label "org.opencontainers.image.source=https://github.com/pi-pod/pi-pod-landing" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            -t "${IMAGE}:${SOURCE_SHA}" \
+            .
+          docker push "${IMAGE}:${SOURCE_SHA}"
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}:${SOURCE_SHA}")"
+          digest="${digest#*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Validate immutable digest
         shell: bash
@@ -112,6 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           cosign sign --yes "${IMAGE}@${DIGEST}"
+
 
   deploy:
     name: Deploy pi-pod-landing digest
