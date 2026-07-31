@@ -1,0 +1,44 @@
+name: Export signed image tarball
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Image digest (sha256:...)
+        required: true
+        default: sha256:17a7decb7172016e8536e3ad4201ce2c480b807478586e202394cc2147cf579e
+
+permissions: {}
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and save image
+        env:
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image="ghcr.io/pi-pod/pi-pod-landing@${DIGEST}"
+          docker pull "$image"
+          docker save "$image" | gzip -1 > pi-pod-landing-image.tgz
+          ls -lh pi-pod-landing-image.tgz
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pi-pod-landing-image
+          path: pi-pod-landing-image.tgz
+          retention-days: 2
