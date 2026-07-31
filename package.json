@@ -1,0 +1,14 @@
+{
+  "name": "pi-pod-landing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public marketing site for pipod.dev",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js"
+  }
+}

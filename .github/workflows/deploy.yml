@@ -1,0 +1,175 @@
+name: Build and deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: pi-pod-landing-production
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/pi-pod/pi-pod-landing
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      source_epoch: ${{ steps.source.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - id: source
+        name: Resolve source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$source_epoch" =~ ^[0-9]{1,12}$ ]]
+          printf 'sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+          printf 'epoch=%s\n' "$source_epoch" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.17.0
+
+      - name: Syntax check
+        run: npm run check
+
+  image:
+    name: Build and sign image
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          pull: true
+          push: true
+          tags: ${{ env.IMAGE }}:${{ needs.validate.outputs.source_sha }}
+          build-args: SOURCE_DATE_EPOCH=${{ needs.validate.outputs.source_epoch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/pi-pod/pi-pod-landing
+            org.opencontainers.image.revision=${{ needs.validate.outputs.source_sha }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Validate immutable digest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+      - name: Sign digest with GitHub OIDC
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  deploy:
+    name: Deploy pi-pod-landing digest
+    needs: image
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      packages: read
+    steps:
+      - name: Run deployment-only forced command
+        shell: bash
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          SOURCE_SHA: ${{ needs.image.outputs.source_sha }}
+          SSH_HOST: ${{ secrets.HOST }}
+          SSH_USER: deploy-pi-pod-landing
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE}@${DIGEST}"
+          [[ "$image_ref" =~ ^ghcr\.io/pi-pod/pi-pod-landing@sha256:[0-9a-f]{64}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$GITHUB_ACTOR" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38}[A-Za-z0-9])?$ ]]
+          [[ "$GITHUB_TOKEN" =~ ^ghs_[A-Za-z0-9._-]{36,1019}$ ]]
+
+          umask 077
+          ssh_dir="${RUNNER_TEMP}/pi-pod-landing-deploy-ssh"
+          install -d -m 700 "$ssh_dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$ssh_dir/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/id" "$ssh_dir/known_hosts"
+          trap 'rm -f "$ssh_dir/id" "$ssh_dir/known_hosts"' EXIT
+          ssh-keygen -y -f "$ssh_dir/id" >/dev/null
+          ssh-keygen -F "$SSH_HOST" -f "$ssh_dir/known_hosts" >/dev/null
+
+          printf '%s\n%s\n' "$GITHUB_ACTOR" "$GITHUB_TOKEN" | \
+          ssh -T -F /dev/null \
+            -i "$ssh_dir/id" \
+            -o BatchMode=yes \
+            -o CheckHostIP=no \
+            -o ClearAllForwardings=yes \
+            -o ConnectTimeout=15 \
+            -o ConnectionAttempts=3 \
+            -o ForwardAgent=no \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o IdentityAgent=none \
+            -o KbdInteractiveAuthentication=no \
+            -o PasswordAuthentication=no \
+            -o PermitLocalCommand=no \
+            -o PreferredAuthentications=publickey \
+            -o RequestTTY=no \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
+            -- "${SSH_USER}@${SSH_HOST}" \
+            "deploy ${image_ref} ${SOURCE_SHA}"

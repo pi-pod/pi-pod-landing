@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pi-pod — every pi session in a fresh pod</title>
+    <meta
+      name="description"
+      content="pi-pod runs every pi coding-agent session inside a fresh, provider-managed pod. Local TUI, remote agent loop, disposable compute."
+    />
+    <meta name="theme-color" content="#0b1020" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">pi-pod</span>
+      </a>
+      <nav class="nav">
+        <a href="https://github.com/pi-pod/pi-pod">GitHub</a>
+        <a href="https://api.pipod.dev/healthz">API status</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">Coding agents, isolated by default</p>
+        <h1>Every <span class="accent">pi</span> session in a fresh pod</h1>
+        <p class="lede">
+          <code>pi-pod</code> launches a clean provider-managed pod, clones your
+          repo, injects secrets, and runs Pi’s agent loop there — while the real
+          interactive TUI stays on your machine.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/pi-pod/pi-pod">Get the CLI</a>
+          <a class="button ghost" href="https://github.com/pi-pod/pi-pod-server">Hosted control plane</a>
+        </div>
+        <pre class="terminal" aria-label="Install and run pi-pod"><code>git clone https://github.com/pi-pod/pi-pod.git
+cd pi-pod &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link
+cd your-repo &amp;&amp; pi-pod</code></pre>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2>Pod boundary</h2>
+          <p>
+            Tools, shell, extensions, model calls, and session files stay inside
+            the pod. Your laptop owns the TUI, host preferences, and the RPC bridge.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Disposable compute</h2>
+          <p>
+            Each run provisions a fresh E2B or Daytona pod. When you quit, the pod
+            stops — disk can persist so uncommitted work isn’t lost.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Hosted path</h2>
+          <p>
+            The control plane at <code>api.pipod.dev</code> backs multi-device and
+            team workflows. This site is the public front door for the product.
+          </p>
+        </article>
+      </section>
+
+      <section class="cta">
+        <h2>Open source, pod-first</h2>
+        <p>
+          CLI, server, and clients live under the
+          <a href="https://github.com/pi-pod">pi-pod</a> org. Start with the CLI,
+          then wire the hosted API when you need it.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>© pi-pod</span>
+      <a href="https://api.pipod.dev/healthz">api.pipod.dev</a>
+    </footer>
+  </body>
+</html>
