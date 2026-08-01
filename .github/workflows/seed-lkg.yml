@@ -1,0 +1,84 @@
+name: Prepare signed image on host
+
+# One-shot bootstrap helper: pulls + verifies a cosign-signed digest via the
+# deploy principal's prepare-image forced command (registry auth from GITHUB_TOKEN).
+# Does not require last-known-good provenance on the currently running container.
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Signed image digest (sha256:...)
+        required: true
+      source_sha:
+        description: 40-char source SHA that signed the digest
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: pi-pod-landing-seed
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/pi-pod/pi-pod-landing
+
+jobs:
+  prepare:
+    name: prepare-image on host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      packages: read
+    steps:
+      - name: Run prepare-image forced command
+        shell: bash
+        env:
+          DIGEST: ${{ inputs.digest }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SSH_HOST: ${{ secrets.HOST }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE}@${DIGEST}"
+          [[ "$image_ref" =~ ^ghcr\.io/pi-pod/pi-pod-landing@sha256:[0-9a-f]{64}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$GITHUB_ACTOR" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38}[A-Za-z0-9])?$ ]]
+          [[ "$GITHUB_TOKEN" =~ ^ghs_[A-Za-z0-9._-]{36,1019}$ ]]
+
+          umask 077
+          ssh_dir="${RUNNER_TEMP}/pi-pod-landing-seed-ssh"
+          install -d -m 700 "$ssh_dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$ssh_dir/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/id" "$ssh_dir/known_hosts"
+          trap 'rm -f "$ssh_dir/id" "$ssh_dir/known_hosts"' EXIT
+          ssh-keygen -y -f "$ssh_dir/id" >/dev/null
+          ssh-keygen -F "$SSH_HOST" -f "$ssh_dir/known_hosts" >/dev/null
+
+          printf '%s\n%s\n' "$GITHUB_ACTOR" "$GITHUB_TOKEN" | \
+          ssh -T -F /dev/null \
+            -i "$ssh_dir/id" \
+            -o BatchMode=yes \
+            -o CheckHostIP=no \
+            -o ClearAllForwardings=yes \
+            -o ConnectTimeout=15 \
+            -o ConnectionAttempts=3 \
+            -o ForwardAgent=no \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o IdentityAgent=none \
+            -o KbdInteractiveAuthentication=no \
+            -o PasswordAuthentication=no \
+            -o PermitLocalCommand=no \
+            -o PreferredAuthentications=publickey \
+            -o RequestTTY=no \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
+            -- "deploy-pi-pod-landing@${SSH_HOST}" \
+            "prepare-image ${image_ref} ${SOURCE_SHA}"
